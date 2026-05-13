@@ -1,8 +1,10 @@
 from typing import Any
 
 from Bio import Entrez
-from schemas.article import Article
 from tracked_journals import JOURNAL_TIERS
+
+from db.pubmed_db import upsert_articles
+from schemas.article import Article
 
 Entrez.email = "henryclee73@gmail.com"
 Entrez.tool = "local_pubmed_rag"
@@ -188,8 +190,16 @@ def parse_articles_xml(xml_data: str) -> list[dict[str, Any]]:
 
 
 def save_articles():
-    # This function can be implemented to save articles to a database or file.
-    pass
+    # Save articles created by this module into the local sqlite DB.
+    # Usage: call save_articles() after `get_articles()` to persist results.
+    # This function expects `articles` variable to exist in the module scope
+    # (for the simple runner at the bottom of this script). For programmatic
+    # use, call `upsert_articles(your_article_list)` directly.
+    try:
+        upsert_articles(articles)
+    except NameError:
+        # nothing to save if `articles` not present
+        return
 
 
 count, pmids = search_pmids(year=2026, journal="Retina")

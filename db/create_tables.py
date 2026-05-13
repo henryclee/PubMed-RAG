@@ -29,9 +29,6 @@ cur.execute("""
 CREATE TABLE IF NOT EXISTS retrieval_state (
     journal TEXT NOT NULL,
     year INTEGER NOT NULL,
-
-    status TEXT NOT NULL, 
-    -- "pending" | "in_progress" | "complete" | "failed"
     total_expected INTEGER,
     total_fetched INTEGER,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
