@@ -1,13 +1,13 @@
 from typing import Any
 
 from Bio import Entrez
-from tracked_journals import JOURNAL_TIERS
 
-from db.pubmed_db import upsert_articles
+from core.settings import settings
+from pubmed.tracked_journals import JOURNAL_TIERS
 from schemas.article import Article
 
-Entrez.email = "henryclee73@gmail.com"
-Entrez.tool = "local_pubmed_rag"
+Entrez.email = settings.entrez_email
+Entrez.tool = settings.entrez_tool
 
 month_map = {
     "Jan": 1,
@@ -55,12 +55,12 @@ def search_pmids(
     return count, pmids
 
 
-def get_text(element: Any) -> str:
+def _get_text(element: Any) -> str:
     """Utility function to extract text from an XML element, handling None values."""
     return str(element).strip() if element is not None else ""
 
 
-def parse_article(article: Any) -> Article:
+def parse_article(article: Any) -> Article | None:
     """Parse a single article record from PubMed XML into a structured Article object."""
     medline = article["MedlineCitation"]
     article_data = medline["Article"]
@@ -73,24 +73,35 @@ def parse_article(article: Any) -> Article:
             doi = str(aid)
 
     # ---- Title ----
-    title = get_text(article_data.get("ArticleTitle"))
+    title = _get_text(article_data.get("ArticleTitle"))
 
     # ---- Publication Type ----
     publication_type: list[str] = []
     for pt in article_data.get("PublicationTypeList", []):
-        publication_type.append(get_text(pt))
+        publication_type.append(_get_text(pt))
 
     # ---- Keywords ----
     keywords: list[str] = []
     for kw in medline.get("KeywordList", []):
         for k in kw:
-            keywords.append(get_text(k))
+            keywords.append(_get_text(k))
 
     # ---- MeSH Terms ----
     mesh_terms: list[str] = []
     for mesh in medline.get("MeshHeadingList", []):
-        for m in mesh:
-            mesh_terms.append(get_text(m.get("DescriptorName")))
+        # Entrez may return dicts, lists, or sequence-like objects for MeshHeading entries.
+        # If `mesh` is a dict, read DescriptorName/QualifierName directly; otherwise
+        # try iterating elements and handle dicts/strings/objects robustly.
+        if isinstance(mesh, dict):
+            descriptor = mesh.get("DescriptorName", None)  # type: ignore
+            if descriptor and descriptor.attributes.get("MajorTopicYN") == "Y":  # type: ignore
+                mesh_terms.append(_get_text(descriptor))
+        else:
+            for m in mesh:
+                if isinstance(m, dict):
+                    descriptor = m.get("DescriptorName", None)  # type: ignore
+                    if descriptor and descriptor.attributes.get("MajorTopicYN") == "Y":  # type: ignore
+                        mesh_terms.append(_get_text(descriptor))
 
     # ---- Abstract ----
     abstract_text = ""
@@ -103,19 +114,38 @@ def parse_article(article: Any) -> Article:
         "UNASSIGNED": "",
     }
 
+    label_nlm_category_map = {
+        "BACKGROUND": "BACKGROUND",
+        "BACKGROUND/PURPOSE": "OBJECTIVE",
+        "PURPOSE": "OBJECTIVE",
+        "OBJECTIVE": "OBJECTIVE",
+        "METHOD": "METHODS",
+        "METHODS": "METHODS",
+        "RESULT": "RESULTS",
+        "RESULTS": "RESULTS",
+        "CONCLUSION": "CONCLUSIONS",
+        "CONCLUSIONS": "CONCLUSIONS",
+    }
+
     abstract = article_data.get("Abstract", {})
     for part in abstract.get("AbstractText", []):
         label_attr = getattr(part, "attributes", None)
-        label = label_attr.get("Label") if label_attr else None
-        nlm_category = label_attr.get("NlmCategory") if label_attr else "UNASSIGNED"
-        text = get_text(part)
+
+        label = None
+        nlm_category = None
+
+        if label_attr:
+            label = label_attr.get("Label")
+            nlm_category = label_attr.get("NlmCategory") or label_nlm_category_map.get(
+                label, "UNASSIGNED"
+            )
+
+        text = _get_text(part)
         if label:
-            print(label)
             abstract_text += (
                 " " + label + ": " + text if abstract_text else label + ": " + text
             )
         else:
-            print("UNLABELED")
             abstract_text += " " + text if abstract_text else text
 
         if nlm_category not in abstract_blocks:
@@ -143,6 +173,10 @@ def parse_article(article: Any) -> Article:
     if "Month" in pub_date:
         month = month_map.get(pub_date["Month"])
 
+    # If there is no abstract text, return None
+    if abstract_text == "":
+        return None
+
     parsed_article = Article(
         pmid=pmid,
         doi=doi,
@@ -166,68 +200,29 @@ def parse_article(article: Any) -> Article:
     return parsed_article
 
 
-def get_articles(pmids: list[str]) -> list[Article]:
+def get_articles(pmids: list[str], batch_size: int = 200) -> list[Article]:
     """Fetch detailed article information for a list of PMIDs and return as a list of structured Article objects."""
     if not pmids:
         return []
 
-    with Entrez.efetch(db="pubmed", id=",".join(pmids), retmode="xml") as handle:
-        records = Entrez.read(handle)
-
     articles: list[Article] = []
+    start = 0
 
-    for article in records.get("PubmedArticle", []):
-        article = parse_article(article)
-        articles.append(article)
+    while True:
+        batch_pmids = pmids[start : start + batch_size]
+
+        with Entrez.efetch(
+            db="pubmed", id=",".join(batch_pmids), retmode="xml"
+        ) as handle:
+            records = Entrez.read(handle)
+
+        for article in records.get("PubmedArticle", []):
+            article = parse_article(article)
+            if article:
+                articles.append(article)
+
+        start += batch_size
+        if start >= len(pmids):
+            break
 
     return articles
-
-
-def parse_articles_xml(xml_data: str) -> list[dict[str, Any]]:
-    # This function can be implemented to parse the XML data if needed.
-    # For now, we are using Entrez.read which already returns a structured format.
-    return []
-
-
-def save_articles():
-    # Save articles created by this module into the local sqlite DB.
-    # Usage: call save_articles() after `get_articles()` to persist results.
-    # This function expects `articles` variable to exist in the module scope
-    # (for the simple runner at the bottom of this script). For programmatic
-    # use, call `upsert_articles(your_article_list)` directly.
-    try:
-        upsert_articles(articles)
-    except NameError:
-        # nothing to save if `articles` not present
-        return
-
-
-count, pmids = search_pmids(year=2026, journal="Retina")
-
-articles = get_articles(pmids[:1])
-
-for article in articles:
-    print(f"PMID: {article.pmid}")
-    print(f"DOI: {article.doi}")
-    print(f"Title: {article.title}")
-    print(f"Journal: {article.journal}")
-    print(f"Journal Tier: {article.journal_tier}")
-    print(f"Year: {article.year}")
-    print(f"Month: {article.month}")
-    print(f"Publication Types: {article.publication_types}")
-    print(f"Keywords: {article.keywords}")
-    print(f"MeSH Terms: {article.MeSH_terms}")
-    print(f"Abstract: {article.abstract_text}")
-    print("---- Abstract Sections ----")
-    if article.background:
-        print(f"  BACKGROUND: {article.background}")
-    if article.objective:
-        print(f"  OBJECTIVE: {article.objective}")
-    if article.methods:
-        print(f"  METHODS: {article.methods}")
-    if article.results:
-        print(f"  RESULTS: {article.results}")
-    if article.conclusions:
-        print(f"  CONCLUSIONS: {article.conclusions}")
-    if article.unassigned:
-        print(f"  UNASSIGNED: {article.unassigned}")

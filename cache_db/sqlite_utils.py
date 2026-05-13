@@ -1,14 +1,13 @@
 import json
 import sqlite3
 
+from core.settings import settings
 from schemas.article import Article
 from schemas.retrieval_state import RetrievalState
 
-DB_PATH_DEFAULT = "pubmed_articles.db"
 
-
-def _connect(db_path: str | None = None) -> sqlite3.Connection:
-    path = db_path or DB_PATH_DEFAULT
+def _connect() -> sqlite3.Connection:
+    path = settings.db_path + "/" + settings.db_name
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -48,7 +47,7 @@ def _upsert_article(article: Article, cur: sqlite3.Cursor) -> None:
         """
         INSERT OR REPLACE INTO articles (
             pmid, doi, title, journal, journal_tier, year, month,
-            abstract, background, objective, methods, results, conclusions,
+            abstract_text, background, objective, methods, results, conclusions,
             unassigned, publication_types, keywords, mesh_terms
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -56,9 +55,9 @@ def _upsert_article(article: Article, cur: sqlite3.Cursor) -> None:
     )
 
 
-def upsert_articles(articles: list[Article], db_path: str | None = None) -> None:
+def upsert_articles(articles: list[Article]) -> None:
     """Batch insert or replace multiple articles into the `articles` table."""
-    conn = _connect(db_path)
+    conn = _connect()
     cur = conn.cursor()
 
     for article in articles:
@@ -71,35 +70,26 @@ def upsert_articles(articles: list[Article], db_path: str | None = None) -> None
 def set_retrieval_state(
     journal: str,
     year: int,
-    status: str,
-    total_expected: int | None = None,
-    total_fetched: int | None = None,
-    db_path: str | None = None,
 ) -> None:
     """Insert or update the retrieval state for a given journal and year."""
-    conn = _connect(db_path)
+    conn = _connect()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO retrieval_state (journal, year, status, total_expected, total_fetched)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO retrieval_state (journal, year)
+        VALUES (?, ?)
         ON CONFLICT(journal, year) DO UPDATE SET
-            status=excluded.status,
-            total_expected=COALESCE(excluded.total_expected, retrieval_state.total_expected),
-            total_fetched=COALESCE(excluded.total_fetched, retrieval_state.total_fetched),
             updated_at=CURRENT_TIMESTAMP
         """,
-        (journal, year, status, total_expected, total_fetched),
+        (journal, year),
     )
     conn.commit()
     conn.close()
 
 
-def get_retrieval_state(
-    journal: str, year: int, db_path: str | None = None
-) -> RetrievalState | None:
+def get_retrieval_state(journal: str, year: int) -> RetrievalState | None:
     """Fetch the retrieval state for a given journal and year."""
-    conn = _connect(db_path)
+    conn = _connect()
     cur = conn.cursor()
     cur.execute(
         "SELECT * FROM retrieval_state WHERE journal = ? AND year = ?", (journal, year)
