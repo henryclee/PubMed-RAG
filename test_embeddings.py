@@ -5,7 +5,7 @@ from embed.embedder import embedder
 client = weaviate.connect_to_local()
 collection = client.collections.get("PubMedAbstract")
 
-query = "intracranial pressure optic nerve swelling papilledema"
+query = "cme in crvo treatment options"
 query_vector = embedder.embed(query)
 
 results = collection.query.near_vector(
@@ -18,6 +18,7 @@ for r in results.objects:
     print(f"Title: {r.properties['title']}")
     print(f"Journal: {r.properties['journal']}")
     print(f"Year: {r.properties['year']}")
-    print(f"Abstract: {r.properties['abstract_text']}...")
+    print(f"Objective: {r.properties['objective']}...")
+    print(f"Conclusions: {r.properties['conclusions']}...")
     print("-" * 80)
 client.close()
