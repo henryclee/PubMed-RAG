@@ -21,7 +21,7 @@ def _upsert_article(article: Article, cur: sqlite3.Cursor) -> None:
 
     publication_types = json.dumps(article.publication_types or [])
     keywords = json.dumps(article.keywords or [])
-    mesh_terms = json.dumps(article.MeSH_terms or [])
+    mesh_terms = json.dumps(article.mesh_terms or [])
 
     params = (
         article.pmid,
@@ -101,3 +101,53 @@ def get_retrieval_state(journal: str, year: int) -> RetrievalState | None:
         return RetrievalState(**dict(row))
     else:
         return None
+
+
+def retrieve_articles(start_row_id: int, batch_size: int) -> list[Article]:
+    """Fetch a batch of articles from the `articles` table starting from a specific row ID."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT * 
+        FROM articles a
+        WHERE rowid > ? 
+        AND NOT EXISTS (
+            SELECT 1
+            FROM embedding_state e
+            WHERE e.pmid = a.pmid
+        )
+        ORDER BY rowid 
+        LIMIT ?
+        """,
+        (start_row_id, batch_size),
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    articles: list[Article] = []
+    for row in rows:
+        article_dict = dict(row)
+        article_dict["publication_types"] = json.loads(
+            article_dict["publication_types"]
+        )
+        article_dict["keywords"] = json.loads(article_dict["keywords"])
+        article_dict["mesh_terms"] = json.loads(article_dict["mesh_terms"])
+        articles.append(Article(**article_dict))
+
+    return articles
+
+
+def mark_articles_embedded(pmids: list[str]) -> None:
+    """Batch mark multiple articles as embedded."""
+    conn = _connect()
+    cur = conn.cursor()
+    cur.executemany(
+        """
+        INSERT OR REPLACE INTO embedding_state (pmid)
+        VALUES (?)
+        """,
+        [(pmid,) for pmid in pmids],
+    )
+    conn.commit()
+    conn.close()

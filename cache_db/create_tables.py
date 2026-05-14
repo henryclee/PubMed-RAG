@@ -48,5 +48,12 @@ def create_tables(db_path: Optional[str] = None):
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS embedding_state (
+        pmid TEXT PRIMARY KEY,
+        embedded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
     conn.close()

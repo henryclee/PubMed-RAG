@@ -23,4 +23,4 @@ class Article(BaseModel):
 
     publication_types: List[str] = []
     keywords: List[str] = []
-    MeSH_terms: List[str] = []
+    mesh_terms: List[str] = []

@@ -183,7 +183,7 @@ def parse_article(article: Any) -> Article | None:
         title=title,
         publication_types=publication_type,
         keywords=keywords,
-        MeSH_terms=mesh_terms,
+        mesh_terms=mesh_terms,
         journal_tier=JOURNAL_TIERS.get(journal, 3),
         abstract_text=abstract_text,
         background=abstract_blocks["BACKGROUND"],

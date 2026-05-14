@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     db_uri: str = f"sqlite:///{db_path}/{db_name}"
     entrez_email: str = "henryclee73@gmail.com"
     entrez_tool: str = "local_pubmed_rag"
+    embedding_model_uri: str = "/Volumes/Data/embedding_models/bge-large-en-v1.5"
+    batch_size: int = 256
 
 
 settings = Settings()
